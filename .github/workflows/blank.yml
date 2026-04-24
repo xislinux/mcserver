@@ -1,0 +1,99 @@
+name: Build Minecraft Paper Server
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-server:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      
+      - name: Download Paper 1.21.5
+        run: |
+          mkdir -p server/plugins
+          cd server
+          curl -o paper.jar https://fill-data.papermc.io/v1/objects/2ae6ae22adf417699746e0f89fc2ef6cb6ee050a5f6608cee58f0535d60b509e/paper-1.21.5-114.jar
+      
+      - name: Download Slimefun4
+        run: |
+          cd server/plugins
+          curl -L -o Slimefun4.jar https://blob.build/project/Slimefun4/RC
+      
+      - name: Setup server files
+        run: |
+          echo "eula=true" > server/eula.txt
+          cat > server/server.properties << 'EOF'
+          server-port=25565
+          online-mode=false
+          max-players=20
+          level-name=world
+          view-distance=10
+          simulation-distance=10
+          EOF
+      
+      - name: Generate world
+        run: |
+          cd server
+          echo stop | java -Xmx2G -jar paper.jar nogui
+          sleep 5
+      
+      - name: Remove world files only
+        run: |
+          cd server
+          rm -rf world/
+          rm -rf world_nether/
+          rm -rf world_the_end/
+          rm -rf logs/
+          rm -f *.log
+          rm -f usercache.json
+      
+      - name: Create timestamped build folder
+        run: |
+          BUILD_DIR="server-build-$(date +'%Y%m%d-%H%M%S')"
+          echo "BUILD_DIR=$BUILD_DIR" >> $GITHUB_ENV
+          mkdir -p "$BUILD_DIR"
+          cp -r server/* "$BUILD_DIR/"
+      
+      - name: Configure git
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+      
+      - name: Push to server-builds branch
+        run: |
+          BRANCH_NAME="server-builds"
+          
+          # Checkout or create the branch
+          if git ls-remote --heads origin $BRANCH_NAME | grep -q $BRANCH_NAME; then
+            git fetch origin $BRANCH_NAME
+            git checkout $BRANCH_NAME
+            git pull origin $BRANCH_NAME
+          else
+            git checkout -b $BRANCH_NAME
+          fi
+          
+          # Move build folder
+          mv ${{ env.BUILD_DIR }} .
+          
+          # Update latest.txt
+          echo "${{ env.BUILD_DIR }}" > latest.txt
+          
+          # Add and commit
+          git add ${{ env.BUILD_DIR }} latest.txt
+          git commit -m "Add server build: ${{ env.BUILD_DIR }} [skip ci]"
+          
+          # Push to branch
+          git push origin $BRANCH_NAME
